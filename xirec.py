@@ -79,6 +79,20 @@ def apply_camtool_parameters(cam: xiapi.Camera, xicamera_file_path):
                 except xiapi.Xi_error as e:
                     print(f'warning: could not set {parameter_key} to {parameter_value}: {e.descr}')
 
+
+def get_all_camera_parameters(cam: xiapi.Camera):
+
+    def safe_cam_get(cam, param):
+        try:
+            val = cam.get_param(param)
+            if isinstance(val, bytes):
+                val = val.decode()
+            return val
+        except xiapi.Xi_error as e:
+            return None
+
+    return {param: val for param in xiapi.VAL_TYPE.keys() if (val := safe_cam_get(cam, param)) is not None}
+
 # cam_snos = [23152050, 23150750]
 cam_snos = [23150750]
 record_no_frames = 4
@@ -96,6 +110,7 @@ class camera_record_data:
     frame_info_buffer: ctypes.Array
 
 recording_data = []
+cameras_parameter_dump = []
 
 for cam_n, cam in enumerate(cameras):
 
@@ -114,6 +129,9 @@ for cam_n, cam in enumerate(cameras):
     frame_info_buffer = (xiapi.XI_IMG * record_no_frames)()
 
     recording_data.append(camera_record_data(frame_data_size, frame_data_buffer, frame_info_buffer))
+
+print('saving camera parameters')
+cameras_parameter_dump = [get_all_camera_parameters(cam) for cam in cameras]
 
 print('recording')
 recording_datetime = datetime.now()
@@ -158,8 +176,12 @@ for cam_n, record_data in enumerate(recording_data):
     os.makedirs(data_dir, exist_ok=False)
     os.makedirs(frames_dir, exist_ok=True)
 
-    with open(os.path.join(data_dir, 'metadata.json'), 'w') as f:
+    with open(os.path.join(data_dir, 'frames_metadata.json'), 'w') as f:
         json.dump([frame_metadata_as_dict(img) for img in record_data.frame_info_buffer], f, indent=1)
+
+    with open(os.path.join(data_dir, 'camera_parameters.json'), 'w') as f:
+        json.dump(cameras_parameter_dump[cam_n], f, indent=1)
+
 
     for i in range(0, record_no_frames):
         img.bp = ctypes.addressof(record_data.frame_data_buffer) + record_data.frame_size * i
