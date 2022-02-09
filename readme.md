@@ -35,7 +35,7 @@ Records for 20 frames from two camera's. Files are saved in jpg format, and load
 
 ## Requirements
 
-* Python version 3.7 or higher
+* Python version 3.8 or higher
 * Python libraries:
   * imageio
   * numpy
