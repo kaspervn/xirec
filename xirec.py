@@ -1,189 +1,95 @@
-import ctypes
+import argparse
 import json
-import os
-import time
-import xml.etree.ElementTree as ET
-from datetime import datetime
+from ctypes import sizeof
+from functools import partial
+from itertools import starmap
+from os import makedirs
+from os.path import join
 
 import imageio
-from dataclasses import dataclass
 from ximea import xiapi
 
-
-def frame_metadata_as_dict(img):
-    def ctypes_convert(obj):  # Very crippled implementation, that is good enough to convert XI_IMG structs.
-        if isinstance(obj, (bool, int, float, str)):
-            return obj
-
-        if isinstance(obj, ctypes.Array):
-            return [ctypes_convert(e) for e in obj]
-
-        if obj is None:
-            return obj
-
-        if isinstance(obj, ctypes.Structure):
-            result = {}
-            anonymous = getattr(obj, '_anonymous_', [])
-
-            for key, *_ in getattr(obj, '_fields_', []):
-                value = getattr(obj, key)
-
-                if key.startswith('_'):
-                    continue
-
-                if key in anonymous:
-                    result.update(ctypes_convert(value))
-                else:
-                    result[key] = ctypes_convert(value)
-
-            return result
-
-    result = ctypes_convert(img)
-    for key in ['bp', 'size', 'bp_size']:
-        del result[key]
-    return result
+from recorder import *
+from utilities import *
 
 
-def apply_camtool_parameters(cam: xiapi.Camera, xicamera_file_path):
-    tree = ET.parse(xicamera_file_path)
-    root = tree.getroot()
-
-    type_map = {
-        'int': int,
-        'float': float,
-        'bool': int,
-        'string': str,
-    }
-
-    if cam.get_device_sn().decode() != root.attrib['serial']:
-        print('warning: applying camera setting file from different camera than it is being applied to')
-
-    for par_xml in root.find('Values'):
-        parameter_key = par_xml.tag
-        parameter_type = par_xml.attrib['type']
-
-        if par_xml.text is not None:
-            parameter_value = type_map[parameter_type](par_xml.text)
-
-            # Convert enumerator values to their matching string expected by Camera.set_param
-            xiapi_type = xiapi.VAL_TYPE[parameter_key.split(':')[0]]
-            if xiapi_type == 'xiTypeEnum':
-                parameter_value = next(
-                    key for key, val in xiapi.ASSOC_ENUM[parameter_key].items() if parameter_value == val.value)
-            if xiapi_type == 'xiTypeInteger' and isinstance(parameter_value, (int, float)):
-                parameter_value = int(parameter_value)
-
-            if cam.get_param(parameter_key) != parameter_value:
-                try:
-                    cam.set_param(parameter_key, parameter_value)
-                except xiapi.Xi_error as e:
-                    print(f'warning: could not set {parameter_key} to {parameter_value}: {e.descr}')
+def parse_camera_arg(s):
+    parts = s.split(':')
+    if len(parts) > 2:
+        raise ValueError()
+    parts[0] = int(parts[0])
+    return parts
 
 
-def get_all_camera_parameters(cam: xiapi.Camera):
-
-    def safe_cam_get(cam, param):
-        try:
-            val = cam.get_param(param)
-            if isinstance(val, bytes):
-                val = val.decode()
-            return val
-        except xiapi.Xi_error as e:
-            return None
-
-    return {param: val for param in xiapi.VAL_TYPE.keys() if (val := safe_cam_get(cam, param)) is not None}
-
-# cam_snos = [23152050, 23150750]
-cam_snos = [23150750]
-record_no_frames = 4
-
-def open_camera_by_sn(sn):
-    c = xiapi.Camera()
-    c.open_device_by_SN(str(sn))
+def camera_from_args(arg) -> xiapi.Camera:
+    c = open_camera_by_sn(arg[0])
+    if len(arg) > 1:
+        apply_camtool_parameters(c, arg[1])
     return c
-cameras = [open_camera_by_sn(sn) for sn in cam_snos]
 
-@dataclass
-class camera_record_data:
-    frame_size: int
-    frame_data_buffer: ctypes.Array
-    frame_info_buffer: ctypes.Array
 
-recording_data = []
-cameras_parameter_dump = []
+def save_camera_parameters(parameters, data_dir: str):
+    with open(join(data_dir, 'camera_parameters.json'), 'w') as file:
+        json.dump(parameters, file, indent=1)
 
-for cam_n, cam in enumerate(cameras):
 
-    apply_camtool_parameters(cam, 'test_cf_mono8_roi_400ms.xicamera')
+def save_recording(buf: RecordingBuffers, data_dir: str, file_format='tiff'):
+    frames_dir = join(data_dir, 'frames')
+    makedirs(frames_dir, exist_ok=True)
 
-    # get one frame to determine the frame size
-    img = xiapi.Image()
-    cam.start_acquisition()
-    cam.get_image(img)
-    frame_data_size = img.get_bytes_per_pixel() * (img.width + img.padding_x) * img.height
-    cam.stop_acquisition()
+    with open(join(data_dir, 'frames_metadata.json'), 'w') as file:
+        json.dump([frame_metadata_as_dict(frame) for frame in buf.meta_buffer], file, indent=1)
 
-    print(f'[{cam_n}] frame_size: {frame_data_size / 1024 ** 2} megabyte')
-    print(f'[{cam_n}] will allocate {frame_data_size * record_no_frames / 1024 ** 3} gigabyte')
-    frame_data_buffer = (ctypes.c_char * frame_data_size * record_no_frames)()
-    frame_info_buffer = (xiapi.XI_IMG * record_no_frames)()
+    # make a string format with the right amount of leading 0's
+    path_format = f'{{:0{len(str(len(buf.meta_buffer)))}}}'
 
-    recording_data.append(camera_record_data(frame_data_size, frame_data_buffer, frame_info_buffer))
+    for n, (img, video_buf) in enumerate(zip(buf.meta_buffer, buf.video_buffer)):
+        img.bp = ctypes.addressof(video_buf)
+        img_np = img.get_image_data_numpy()
 
-print('saving camera parameters')
+        imageio.imwrite(join(frames_dir, path_format.format(n) + f'.{file_format}'), img_np)
+
+
+argparser = argparse.ArgumentParser()
+
+argparser.add_argument('camera-sn:parameter-file', nargs='+', type=parse_camera_arg)
+argparser.add_argument('-fc', '--frame_count', default=0, type=int)
+argparser.add_argument('-f', '--format', default='tiff', choices=['tiff', 'bmp', 'jpg', 'png'])
+
+args = argparser.parse_args()
+
+no_frames = args.frame_count
+saving_format = args.format
+
+print('opening cameras')
+cameras = [camera_from_args(arg) for arg in getattr(args, 'camera-sn:parameter-file')]
+cameras_sn_str = [cam.get_device_sn().decode() for cam in cameras]
+
+camera_buffers = list(map(partial(allocate_recording_buffers, no_frames=no_frames), map(probe_memory_requirements, cameras)))
+print(f'allocated {sum(sizeof(b.video_buffer) for b in camera_buffers) / 1024**3:.2f} gigabyte for video')
+
+print('storing all camera parameters')
 cameras_parameter_dump = [get_all_camera_parameters(cam) for cam in cameras]
 
 print('recording')
 recording_datetime = datetime.now()
-for cam in cameras:
-    cam.start_acquisition()
+record_cameras(cameras, camera_buffers, no_frames)
 
-img = xiapi.Image()
-for i in range(record_no_frames):
-    for cam_n, cam in enumerate(cameras):
-        cam.get_image(img)
-        ctypes.memmove(ctypes.addressof(recording_data[cam_n].frame_info_buffer) + ctypes.sizeof(xiapi.XI_IMG) * i, ctypes.addressof(img), ctypes.sizeof(xiapi.XI_IMG))
-        ctypes.memmove(ctypes.addressof(recording_data[cam_n].frame_data_buffer) + recording_data[cam_n].frame_size * i, img.bp, recording_data[cam_n].frame_size)
+print('saving')
+recording_dirs = [join(f'{recording_datetime.isoformat().replace(":", "_")}', f'{sn}') for sn in cameras_sn_str]
 
-for cam in cameras:
-    cam.stop_acquisition()
+list(map(makedirs, recording_dirs))
 
-for cam_n, cam in enumerate(cameras):
-    cam.set_counter_selector('XI_CNT_SEL_API_SKIPPED_FRAMES')
-    print(f'[{cam_n}] api skipped frames: {cam.get_counter_value()}')
-    cam.set_counter_selector('XI_CNT_SEL_TRANSPORT_SKIPPED_FRAMES')
-    print(f'[{cam_n}] transport skipped frames: {cam.get_counter_value()}')
+list(starmap(partial(save_recording, file_format=saving_format), zip(camera_buffers, recording_dirs)))
 
-for cam in cameras:
-    cam.close_device()
+print('analyzing skipped frames')
+skipped_frames = list(map(detect_skipped_frames, camera_buffers))
+if sum(skipped_frames) > 0:
+    for count, camera_sn in zip(skipped_frames, cameras_sn_str):
+        print(f'\t[{camera_sn}]: skipped frames: {count}')
+else:
+    print('\tno skipped frames')
 
-print('done recording')
+list(map(xiapi.Camera.close_device, cameras))
 
-
-for cam_n, record_data in enumerate(recording_data):
-    for i in range(1, record_no_frames):
-        a = record_data.frame_info_buffer[i].nframe
-        b = record_data.frame_info_buffer[i-1].nframe
-        if a - 1 != b:
-            print(f'[{cam_n}] skipped frames detected: {a} -> {b}')
-
-recording_dir = lambda n: os.path.join(f'{recording_datetime.isoformat().replace(":", "_")}', f'{cam_snos[n]}')
-
-for cam_n, record_data in enumerate(recording_data):
-    data_dir = recording_dir(cam_n)
-    frames_dir = os.path.join(data_dir, 'frames')
-
-    os.makedirs(data_dir, exist_ok=False)
-    os.makedirs(frames_dir, exist_ok=True)
-
-    with open(os.path.join(data_dir, 'frames_metadata.json'), 'w') as f:
-        json.dump([frame_metadata_as_dict(img) for img in record_data.frame_info_buffer], f, indent=1)
-
-    with open(os.path.join(data_dir, 'camera_parameters.json'), 'w') as f:
-        json.dump(cameras_parameter_dump[cam_n], f, indent=1)
-
-
-    for i in range(0, record_no_frames):
-        img.bp = ctypes.addressof(record_data.frame_data_buffer) + record_data.frame_size * i
-        img_np = img.get_image_data_numpy()
-        imageio.imwrite(os.path.join(frames_dir, f'{i:06}.tiff'), img_np)
+print('done')
