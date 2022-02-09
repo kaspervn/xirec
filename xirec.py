@@ -52,7 +52,7 @@ def save_recording(buf: RecordingBuffers, data_dir: str, file_format='tiff'):
 
 argparser = argparse.ArgumentParser()
 
-argparser.add_argument('camera-sn:parameter-file', nargs='+', type=parse_camera_arg)
+argparser.add_argument('camera-sn:parameter-file', nargs='+', type=parse_camera_arg, help='The parameter file as saved by XiCamtool is optional')
 argparser.add_argument('-fc', '--frame_count', default=0, type=int)
 argparser.add_argument('-f', '--format', default='tiff', choices=['tiff', 'bmp', 'jpg', 'png'])
 
