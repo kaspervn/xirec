@@ -42,4 +42,5 @@ Records for 20 frames from two camera's. Files are saved in jpg format, and load
 * [XIMEA's software package](https://www.ximea.com/support/wiki/apis/XIMEA_Windows_Software_Package), including the python API.
 
 ## Limitations
-* Curently only records for a set amount of frames, not time. All the camera's should have the same framerate
+* Curently only records for a set amount of frames, not time.
+* All the camera's should have the same framerate
