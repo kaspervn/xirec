@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from ctypes import sizeof
 from functools import partial
 from itertools import starmap
@@ -55,6 +56,8 @@ argparser = argparse.ArgumentParser()
 argparser.add_argument('camera-sn:parameter-file', nargs='+', type=parse_camera_arg, help='The parameter file as saved by XiCamtool is optional')
 argparser.add_argument('-fc', '--frame_count', default=0, type=int)
 argparser.add_argument('-f', '--format', default='tiff', choices=['tiff', 'bmp', 'jpg', 'png'])
+argparser.add_argument('-w', '--wait', default='no', help='Wait with recording until the trigger input of specified camera goes high')
+argparser.add_argument('--wait-gpi', default=1, choices=list(range(1,13)), help='In case of waiting, selects which GPI port to use as the trigger. Defaults to 1')
 
 args = argparser.parse_args()
 
@@ -70,6 +73,24 @@ print(f'allocated {sum(sizeof(b.video_buffer) for b in camera_buffers) / 1024**3
 
 print('storing all camera parameters')
 cameras_parameter_dump = [get_all_camera_parameters(cam) for cam in cameras]
+
+if args.wait != 'no':
+    try:
+        cam_to_wait_for_idx = cameras_sn_str.index(args.wait)
+    except ValueError:
+        print(f'Can not wait for camera with serial number {args.wait} because it is not opened for recording')
+
+    cam_to_wait_for = cameras[cam_to_wait_for_idx]
+
+    selected_gpi = f'XI_GPI_PORT{args.wait_gpi}'
+
+    print(f'Waiting on GPI {args.wait_gpi} of camera {args.wait}')
+    while True:
+        cam_to_wait_for.set_gpi_selector(selected_gpi)
+        if cam_to_wait_for.get_gpi_level():
+            break
+        time.sleep(0.1)
+
 
 print('recording')
 recording_datetime = datetime.now()
