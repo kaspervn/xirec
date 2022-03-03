@@ -103,6 +103,8 @@ list(map(makedirs, recording_dirs))
 
 list(starmap(partial(save_recording, file_format=saving_format), zip(camera_buffers, recording_dirs)))
 
+list(starmap(save_camera_parameters, zip(cameras_parameter_dump, recording_dirs)))
+
 print('analyzing skipped frames')
 skipped_frames = list(map(detect_skipped_frames, camera_buffers))
 if sum(skipped_frames) > 0:
