@@ -54,21 +54,34 @@ def save_recording(buf: RecordingBuffers, data_dir: str, file_format='tiff'):
 argparser = argparse.ArgumentParser()
 
 argparser.add_argument('camera-sn:parameter-file', nargs='+', type=parse_camera_arg, help='The parameter file as saved by XiCamtool is optional')
-argparser.add_argument('-fc', '--frame_count', default=0, type=int)
+argparser.add_argument('-fc', '--frame_count', default=0, type=int, help='number of frames to record')
+argparser.add_argument('-d', '--duration', default=0, type=float, help='number of seconds to record')
 argparser.add_argument('-f', '--format', default='tiff', choices=['tiff', 'bmp', 'jpg', 'png'])
 argparser.add_argument('-w', '--wait', default='no', help='Wait with recording until the trigger input of specified camera goes high')
 argparser.add_argument('--wait-gpi', default=1, choices=list(range(1,13)), help='In case of waiting, selects which GPI port to use as the trigger. Defaults to 1')
 
 args = argparser.parse_args()
 
-no_frames = args.frame_count
+if (args.duration == 0 and args.frame_count == 0) or (args.duration != 0 and args.frame_count != 0):
+    print('Either define a number of frames or duration to record, but not both or none')
+    exit(1)
+
+camera_args = getattr(args, 'camera-sn:parameter-file')
+no_cameras = len(camera_args)
 saving_format = args.format
 
 print('opening cameras')
-cameras = [camera_from_args(arg) for arg in getattr(args, 'camera-sn:parameter-file')]
+cameras = [camera_from_args(arg) for arg in camera_args]
 cameras_sn_str = [cam.get_device_sn().decode() for cam in cameras]
 
-camera_buffers = list(map(partial(allocate_recording_buffers, no_frames=no_frames), map(probe_memory_requirements, cameras)))
+if args.duration == 0:
+    no_frames = [args.frame_count] * no_cameras
+else:
+    no_frames = [int(cam.get_framerate() * args.duration) + 1 for cam in cameras]
+    for sn, framerate, fcount in zip(cameras_sn_str, map(lambda cam: cam.get_framerate(), cameras), no_frames):
+        print(f'[{sn}] framerate: {framerate} | no frames: {fcount}')
+
+camera_buffers = list(starmap(allocate_recording_buffers, zip(map(probe_memory_requirements, cameras), no_frames)))
 print(f'allocated {sum(sizeof(b.video_buffer) for b in camera_buffers) / 1024**3:.2f} gigabyte for video')
 
 print('storing all camera parameters')

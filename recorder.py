@@ -2,6 +2,7 @@ from ximea import xiapi
 import ctypes
 from typing import List
 from dataclasses import dataclass
+from threading import Thread
 from datetime import datetime
 
 @dataclass
@@ -27,20 +28,26 @@ def allocate_recording_buffers(frame_size, no_frames):
     return RecordingBuffers(video_buffer, meta_buffer)
 
 
-def record_cameras(cameras: List[xiapi.Camera], buffers: List[RecordingBuffers], no_frames):
-    for cam in cameras:
-        cam.start_acquisition()
+def record_camera_thread(cam: xiapi.Camera, buffer: RecordingBuffers, no_frames):
+    cam.start_acquisition()
 
     img = xiapi.Image()
     for i in range(no_frames):
-        for cam_n, cam in enumerate(cameras):
-            cam.get_image(img)
+        cam.get_image(img)
+        ctypes.memmove(ctypes.addressof(buffer.meta_buffer[i]), ctypes.addressof(img), ctypes.sizeof(xiapi.XI_IMG))
+        ctypes.memmove(buffer.video_buffer[i], img.bp, ctypes.sizeof(buffer.video_buffer[i]))
 
-            ctypes.memmove(ctypes.addressof(buffers[cam_n].meta_buffer[i]), ctypes.addressof(img), ctypes.sizeof(xiapi.XI_IMG))
-            ctypes.memmove(buffers[cam_n].video_buffer[i], img.bp, ctypes.sizeof(buffers[cam_n].video_buffer[i]))
+    cam.stop_acquisition()
 
-    for cam in cameras:
-        cam.stop_acquisition()
+
+def record_cameras(cameras: List[xiapi.Camera], buffers: List[RecordingBuffers], no_frames: List[int]):
+    threads = [Thread(target=record_camera_thread, name=f'recording thread {n}', args=(cameras[n], buffers[n], no_frames[n])) for n in range(len(cameras))]
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
 
 
 def detect_skipped_frames(recording_buffer: RecordingBuffers):
