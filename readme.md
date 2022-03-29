@@ -14,17 +14,26 @@ Program to record from USB3 XIMEA camera's
 Run `python xirec.py --help` for basic documentation.
 
 ```
-usage: xirec.py [-h] [-fc FRAME_COUNT] [-f {tiff,bmp,jpg,png}]
+usage: xirec.py [-h] [-fc FRAME_COUNT] [-d DURATION] [-f {tiff,bmp,jpg,png}]
+                [-w WAIT] [--wait-gpi {1,2,3,4,5,6,7,8,9,10,11,12}]
                 camera-sn:parameter-file [camera-sn:parameter-file ...]
 
 positional arguments:
   camera-sn:parameter-file
                         The parameter file as saved by XiCamtool is optional
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -fc FRAME_COUNT, --frame_count FRAME_COUNT
+                        number of frames to record
+  -d DURATION, --duration DURATION
+                        number of seconds to record
   -f {tiff,bmp,jpg,png}, --format {tiff,bmp,jpg,png}
+  -w WAIT, --wait WAIT  Wait with recording until the trigger input of
+                        specified camera goes high
+  --wait-gpi {1,2,3,4,5,6,7,8,9,10,11,12}
+                        In case of waiting, selects which GPI port to use as
+                        the trigger. Defaults to 1
 ```
 
 You have to specify what camera's to record from by their serial number. If you want assign a `.xicamera` file, append `:somefile.xicamera` to the serialnumber
