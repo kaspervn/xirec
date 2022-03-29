@@ -80,8 +80,17 @@ else:
     no_frames = [int(cam.get_framerate() * args.duration) + 1 for cam in cameras]
     for sn, framerate, fcount in zip(cameras_sn_str, map(lambda cam: cam.get_framerate(), cameras), no_frames):
         print(f'[{sn}] framerate: {framerate} | no frames: {fcount}')
+        
+memory_requirement_per_frame = list(map(probe_memory_requirements, cameras))
 
-camera_buffers = list(starmap(allocate_recording_buffers, zip(map(probe_memory_requirements, cameras), no_frames)))
+total_storage_requirement = sum(1024 + frame_size*frame_count for frame_size,frame_count in zip(memory_requirement_per_frame, no_frames))
+
+print('checking disk space')
+if free_disk_space('.') < total_storage_requirement:
+    print('ERROR: not enough disk space for storing video')
+    exit(1)
+
+camera_buffers = list(starmap(allocate_recording_buffers, zip(memory_requirement_per_frame, no_frames)))
 print(f'allocated {sum(sizeof(b.video_buffer) for b in camera_buffers) / 1024**3:.2f} gigabyte for video')
 
 print('storing all camera parameters')
