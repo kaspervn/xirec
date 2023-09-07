@@ -18,7 +18,7 @@ def parse_camera_arg(s):
     parts = s.split(':')
     if len(parts) > 2:
         raise ValueError()
-    parts[0] = int(parts[0])
+#    parts[0] = parts[0]
     return parts
 
 
@@ -86,9 +86,9 @@ memory_requirement_per_frame = list(map(probe_memory_requirements, cameras))
 total_storage_requirement = sum(1024 + frame_size*frame_count for frame_size,frame_count in zip(memory_requirement_per_frame, no_frames))
 
 print('checking disk space')
-if free_disk_space('.') < total_storage_requirement:
-    print('ERROR: not enough disk space for storing video')
-    exit(1)
+#if free_disk_space('.') < total_storage_requirement:
+#    print('ERROR: not enough disk space for storing video')
+#    exit(1)
 
 camera_buffers = list(starmap(allocate_recording_buffers, zip(memory_requirement_per_frame, no_frames)))
 print(f'allocated {sum(sizeof(b.video_buffer) for b in camera_buffers) / 1024**3:.2f} gigabyte for video')

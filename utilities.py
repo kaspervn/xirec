@@ -83,7 +83,7 @@ def get_all_camera_parameters(cam: xiapi.Camera):
             if isinstance(val, bytes):
                 val = val.decode()
             return val
-        except xiapi.Xi_error as e:
+        except (xiapi.Xi_error, ValueError):
             return None
 
     return {param: val for param in xiapi.VAL_TYPE.keys() if (val := safe_cam_get(cam, param)) is not None}
